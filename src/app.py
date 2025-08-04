@@ -6,11 +6,31 @@ Interface Streamlit para o problema de entrega com drones usando Algoritmo Gené
 import streamlit as st
 import matplotlib.pyplot  as plt
 import numpy as np
-from ga_core import genetic_algorithm
+import time
+import pandas as pd
+from ga_core import algoritimo_genetico
 from typing import List
+        
 
+DEFAULTS = {
+    "num_clients":      10,
+    "battery_limit":    5000.0,
+    "population_size":  200,
+    "generations":      200,
+    "mutation_rate":    20,    #percentual %
+    "crossover_rate":   80,    #percentual %
+    "tournament_size":  3,
+    "seed":             42,
+    "elitism_percent":  10,    #percentual%
+    "early_stopping":   True,
+}
 
-def gerar_clientes(n: int, raio: float = 500.0, seed: int = None) -> np.ndarray:
+# ❷ injeta apenas as chaves que ainda não existem
+for key, value in DEFAULTS.items():
+    st.session_state.setdefault(key, value)
+
+# Função para gerar clientes no grafico
+def gerar_coordenadas_clientes(n: int, raio: float = 500.0, seed: int = None) -> np.ndarray:
     """
     Gera coordenadas aleatórias para n clientes dentro de um círculo de raio dado.
     """
@@ -22,8 +42,8 @@ def gerar_clientes(n: int, raio: float = 500.0, seed: int = None) -> np.ndarray:
     y = radii * np.sin(angles)
     return np.column_stack((x, y))
 
-
-def plot_routes(clients_coords: np.ndarray, routes: List[List[int]], title: str = "Rotas dos Drones") -> plt.Figure:
+# Função para plotar as rotas dos drones
+def plotar_rotas(clients_coords: np.ndarray, rotas: List[List[int]], titulo: str = "Rotas dos Drones", raio=800) -> plt.Figure:
     """
     Plota as rotas dos drones em um gráfico 2D.
     Args:
@@ -40,53 +60,165 @@ def plot_routes(clients_coords: np.ndarray, routes: List[List[int]], title: str 
     ax.scatter(clients_coords[:, 0], clients_coords[:, 1], c='black', s=60, label='Clientes')
     for i, (x, y) in enumerate(clients_coords):
         ax.text(x, y, f'{i+1}', fontsize=12, ha='right', va='bottom', color='black')
-    # Cores para os drones
+    # Cores de linhapara os drones
     colors = ['blue', 'green']
-    for i, route in enumerate(routes):
-        if not route:
+    for i, rota in enumerate(rotas):
+        if not rota:
             continue
         # Construir caminho: lanchonete -> clientes -> lanchonete
-        path = np.vstack(([0, 0], clients_coords[route], [0, 0]))
+        path = np.vstack(([0, 0], clients_coords[rota], [0, 0]))
         ax.plot(path[:, 0], path[:, 1], '-o', color=colors[i % len(colors)], label=f'Drone {i+1}')
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_title(titulo)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    ax.grid(True)
+    ax.set_aspect('equal')
+    margin = 100
+    limit = raio + margin
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(-limit, limit)
+    return fig
+
+# Função para criar gráfico de convergência no estado inicial
+def cria_grafico_convergencia_vazio(generations=200):
+    """Cria gráfico de convergência vazio."""
+    fig, ax = plt.subplots(figsize=(6, 4))
+    plt.style.use('seaborn-v0_8')
+    ax.set_xlabel("Geração", fontsize=12)
+    ax.set_ylabel('Distância total (m)', fontsize=12)
+    ax.set_title('Convergência do AG', fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.tick_params(labelsize=10)
+    ax.set_xlim(0, generations)
+    ax.set_ylim(0, 5000)  
+    fig.tight_layout()
+    return fig
+
+# Função para criar gráfico de convergência no estado inicial
+def cria_grafico_rotas_vazio(clients_coords, title="Rotas dos Drones", raio=800):
+    """Cria gráfico de rotas com apenas clientes e lanchonete (sem rotas)."""
+    fig, ax = plt.subplots(figsize=(6, 4))
+    # Plotar lanchonete
+    ax.scatter(0, 0, c='red', s=120, marker='*', label='Lanchonete (0,0)')
+    # Plotar clientes
+    ax.scatter(clients_coords[:, 0], clients_coords[:, 1], c='black', s=60, label='Clientes')
+    for i, (x, y) in enumerate(clients_coords):
+        ax.text(x, y, f'{i+1}', fontsize=12, ha='right', va='bottom', color='black')
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     ax.set_title(title)
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
     ax.grid(True)
     ax.set_aspect('equal')
+    margin = 100
+    limit = raio + margin
+    
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(-limit, limit)
     return fig
 
+
+# Função principal do app (Streamlit)
 def main():
     """
-    Função principal do app Streamlit.
+    Função principal do app (Streamlit)
     """
-    st.title("🚁 Drone Delivery com Algoritmo Genético")
+    #Configuração da página
+    st.title("🚁 Drone Delivery com GA - FIAP IA Devs")
     with st.expander("ℹ️ Como o Problema é Calculado", expanded=False):
         st.markdown("""
-        **Problema:**
-        - 2 drones partem da lanchonete (0,0), entregam lanches a clientes e retornam.
-        - Cada drone tem limite de bateria (distância máxima).
-        - Objetivo: **minimizar a distância total percorrida**.
+        ## 🎯 **Objetivo do Problema**
+        Minimizar a **distância total** percorrida por 2 drones de entrega de uma lanchonete.
+        
+        ---
+        
+        ## 🧬 **Representação da Solução (Genoma)**
+        
+        **📋 Formato:** Lista com duas sublistas representando as rotas de cada drone.
+        
+        ```python
+        # Exemplo para 6 clientes:
+        [[2, 1], [3, 4, 5, 6]]
+        ```
+        
+        **💡 Significado:**
+        - 🚁 **Drone 1:** Entrega aos clientes 2 → 1 (nesta ordem)  
+        - 🚁 **Drone 2:** Entrega aos clientes 3 → 4 → 5 → 6 (nesta ordem)
+        
+        **⚖️ Divisão Balanceada:** Preserva a vida útil dos drones evitando sobrecarga.
+        
+        ---
+        
+        ## 📊 **Função de Fitness**
+        
+        **🔢 Cálculo:** Soma das distâncias euclidianas de ambos os drones.
+        
+        **📍 Para cada drone:**
+        Para cada drone, calcular a distância euclidiana da lanchonete ao primeiro cliente, 
+        entre clientes consecutivos, e do último cliente de volta à lanchonete.
+   
+        
+        **⚠️ Penalização:** Se distância > limite de bateria → fitness × 100
+        
+        **🎯 Meta:** **Minimizar** o valor do fitness (menor distância = melhor solução)
+        
+        ---
+        
+        ## 🏆 **Método de Seleção**
+        
+        **🥊 Torneio (tamanho 3):**
+        - Escolhe 3 indivíduos aleatoriamente
+        - Seleciona o de **menor fitness**
+        - Equilibra diversidade e qualidade das soluções
+        
+        ---
+        
+        ## 🔄 **Método de Crossover**
+        
+        **🧬 Order Crossover (OX) Adaptado:**
+        - Garante permutações válidas (sem clientes repetidos)
+        - Ideal para problemas de sequenciamento de rotas
+        - Preserva a ordem relativa dos elementos
+        
+        ---
+        
+        ## 🎲 **Inicialização**
+        
+        **📝 Processo:**
+        1. **Permutação aleatória** de todos os clientes
+        2. **Divisão balanceada** entre os 2 drones  
+        3. **Garantia** de que cada cliente aparece exatamente uma vez
+        
+        ```python
+        # Exemplo: [3,1,5,2,6,4] → [[3,1,5], [2,6,4]]
+        ```
+        
+        ---
+        
+        ## 🛑 **Critérios de Parada**
+        
+        **📈 Opções Disponíveis:**
+        - **🔢 Gerações Fixas:** Número máximo definido (ex: 200)  
+        - **⏰ Early Stopping:** Para se sem melhoria por 30 gerações
+        
+        **🎯 Objetivo:** Evitar ótimos locais e encontrar soluções melhores.
+        
         """)
 
     st.set_page_config(page_title="GA Drones Delivery com Algoritmo Genético - FIAP IA Devs", layout="wide", page_icon="")   
 
-    if 'num_clients' not in st.session_state:
-        st.session_state['num_clients'] = 12
-    if 'battery_limit' not in st.session_state:
-        st.session_state['battery_limit'] = 3000.0
-    if 'population_size' not in st.session_state:
-        st.session_state['population_size'] = 100
-    if 'generations' not in st.session_state:
-        st.session_state['generations'] = 200
-    if 'mutation_rate' not in st.session_state:
-        st.session_state['mutation_rate'] = 20
-    if 'crossover_rate' not in st.session_state:
-        st.session_state['crossover_rate'] = 80
-    if 'tournament_size' not in st.session_state:
-        st.session_state['tournament_size'] = 3
+    #Inicia os valores padrão (DEFAULTS) no estado da sessão
+    for key, value in DEFAULTS.items():
+        st.session_state.setdefault(key, value)
 
+    #Configuração da sidebar
     with st.sidebar:
+        st.markdown("---")
+        if st.button("🎲 Randomizar Clientes"):
+            st.session_state['num_clients'] = st.session_state.get('num_clients', 12)
+            st.session_state['seed'] = np.random.randint(0, 100000)
+            st.rerun()
         st.markdown("---")
         resetButton = st.button("🔄 Resetar parâmetros")
         st.markdown("---")
@@ -98,37 +230,91 @@ def main():
             
         st.header("Parâmetros do Problema")
         num_clients = st.slider("Número de clientes", 5, 15,  key='num_clients')
-        battery_limit = st.number_input("Limite de bateria por drone (m)", 1600.0, 5000.0, step=100.0, key='battery_limit')
-        seed = 42 #st.number_input("Seed aleatória (opcional)", value=42,step=1)
+        battery_limit = st.number_input("Limite de bateria por drone (m)", 1600.0, 20000.0, step=100.0, key='battery_limit')
         
         st.header("Parâmetros do AG")
         population_size = st.slider("Tamanho da população", 10, 200, key='population_size')
         generations = st.slider("Gerações", 10, 500,step=10, key='generations')
-        crossover_rate_percent = st.sidebar.slider("Probabilidade de Crossover", 0.5, 1.0, 0.7, step=0.05, help="Chance de combinar rotas(recombinação genética). Valores altos aumentam a exploração.")
-        mutation_rate_percent = st.sidebar.slider("Probabilidade de Mutação", 0.5, 1.0, 0.9, step=0.05, help="Chance de alterar rotas (introduzir novidades). Valores altos aumentam a diversidade.")
+        crossover_rate_percent = st.sidebar.slider("Probabilidade de Crossover", 0.5, 1.0, 0.8, step=0.01, help="Chance de combinar rotas(recombinação genética). Valores altos aumentam a exploração.")
+        mutation_rate_percent = st.sidebar.slider("Probabilidade de Mutação", 0.0, 1.0, 0.2, step=0.01, help="Chance de alterar rotas (introduzir novidades). Valores altos aumentam a diversidade.")
         tournament_size = st.slider("Tamanho do torneio", 2, 6,  key='tournament_size')
+        elitism_percent = st.selectbox(
+            "Elitismo (%)", 
+            options=[0, 5, 10, 15, 20], 
+            index=2,  # Default: 10%
+            help="Percentual dos melhores indivíduos preservados para a próxima geração"
+        )
+        early_stopping = st.checkbox(
+            "Parada antecipada", 
+            value=True,
+            help="Interrompe o algoritmo se não houver melhoria por 30 gerações consecutivas"
+        )
         st.markdown("---")
-        run = st.button("Executar Algoritmo Genético")
+        botao_executar_ga_clicado = st.button("Executar Algoritmo Genético")
 
-    
+    #Gera os coordadas dos pontso dos clientes
+    seed = st.session_state.get('seed', 42)
+    num_clients_atual = st.session_state.get('num_clients', 12)
+    coordenadas_clientes = gerar_coordenadas_clientes(num_clients_atual, raio=800.0, seed=int(seed))
+    col_left,  col_right = st.columns([1, 1])
 
+    #Mostra os gráficos de rotas e convergência no estado inicial
+    with col_left:
+        st.markdown("Rotas dos Drones")
+        route_placeholder = st.empty()
+        # Mostra gráfico base com clientes posicionados, porém sem as rotas ainda
+        base_routes_fig = cria_grafico_rotas_vazio(coordenadas_clientes, raio=800)
+        route_placeholder.pyplot(base_routes_fig, use_container_width=True)
 
-    if run:
-        clients_coords = gerar_clientes(num_clients, raio=800.0, seed=int(seed))
-        col_left,  col_right = st.columns([1, 1])
+    with col_right:
+        st.markdown("Convergência do AG")
+        convergence_placeholder = st.empty()
+        # Mostra gráfico de convergência, porém ainda sem a linha de convergência
+        empty_conv_fig = cria_grafico_convergencia_vazio(generations)
+        convergence_placeholder.pyplot(empty_conv_fig, use_container_width=True)
+
+    #Se o botão de executar for clicado, executa o algoritmo genético
+    if botao_executar_ga_clicado:
         progress_bar = st.progress(0)
-        import time
-        convergence_history = []
-
-        with col_left:
-            route_placeholder = st.empty()  # Espaço reservado para o gráfico animado de rotas
-        with col_right:
-            convergence_placeholder = st.empty()  # Espaço reservado para o gráfico de convergência
-
+        historico_convergencia = []
+        solutions_data = []  # Lista para armazenar dados das soluções
+        
+        # Tabela para visualizar soluções
+        st.markdown("### 📊 Evolução das Soluções")
+        table_placeholder = st.empty()
+        
+        #Definição da função que será chamada a cada geração
         def on_generation(gen, best_genotype, best_fitness):
-            convergence_history.append(best_fitness)
-            # Gráfico de rotas
-            fig_route = plot_routes(clients_coords, best_genotype, title=f"Rotas - Geração {gen+1}")
+            historico_convergencia.append(best_fitness)
+            
+            # Calcular distâncias individuais dos drones
+            from ga_core import calcula_distancia_euclidiana_rota
+            drone1_dist = calcula_distancia_euclidiana_rota(best_genotype[0], coordenadas_clientes) if best_genotype[0] else 0.0
+            drone2_dist = calcula_distancia_euclidiana_rota(best_genotype[1], coordenadas_clientes) if best_genotype[1] else 0.0
+            
+            # Formatar rotas para exibição compacta
+            drone1_route = ' → '.join([str(idx+1) for idx in best_genotype[0]]) if best_genotype[0] else "Vazio"
+            drone2_route = ' → '.join([str(idx+1) for idx in best_genotype[1]]) if best_genotype[1] else "Vazio"
+            
+            # Adicionar dados da solução atual
+            solution_data = {
+                'Geração': gen + 1,
+                'Fitness Total': f"{best_fitness:.1f}m",
+                'Drone 1': drone1_route,
+                'Dist. D1': f"{drone1_dist:.1f}m",
+                'Drone 2': drone2_route, 
+                'Dist. D2': f"{drone2_dist:.1f}m",
+                'Status': '⚠️' if (drone1_dist > battery_limit or drone2_dist > battery_limit) else '✅'
+            }
+            solutions_data.append(solution_data)
+            
+            # Atualizar tabela (mostrar apenas as últimas 5 soluções, mais recente no topo)
+            df = pd.DataFrame(solutions_data[-5:])  # Últimas 5 gerações
+            df = df.iloc[::-1]  # Inverter ordem - mais recente no topo
+            table_placeholder.dataframe(df, use_container_width=True, hide_index=True)
+
+            # Gráfico de rotas em tempo real
+            fig_route = plotar_rotas(coordenadas_clientes, best_genotype, titulo=f"Rotas - Geração {gen+1}", raio=800)
             fig_route.set_size_inches(6, 4)
             route_placeholder.pyplot(fig_route, use_container_width=True)
 
@@ -136,7 +322,7 @@ def main():
         
             fig_conv, ax_conv = plt.subplots(figsize=(6, 4))
             plt.style.use('seaborn-v0_8')
-            ax_conv.plot(convergence_history, label='Melhor fitness')
+            ax_conv.plot(historico_convergencia, label='Melhor fitness')
             ax_conv.set_xlabel("Geração", fontsize=12)
             ax_conv.set_ylabel('Distância total (m)')
             ax_conv.set_title('Convergência do AG', fontsize=12)
@@ -147,55 +333,49 @@ def main():
             convergence_placeholder.pyplot(fig_conv, use_container_width=True)
             time.sleep(0.05)
 
-        # crossover_rate = crossover_rate_percent / 100
-        # mutation_rate = mutation_rate_percent / 100
-
-        result = genetic_algorithm(
-            clients_coords=clients_coords,
-            population_size=population_size,
-            generations=generations,
-            battery_limit=battery_limit,
-            mutation_rate=mutation_rate_percent,
-            crossover_rate=crossover_rate_percent,
-            tournament_size=tournament_size,
-            on_generation=on_generation  # Passa o callback
+        result = algoritimo_genetico(
+            clientes_coordenadas=coordenadas_clientes,
+            tamanho_populacao=population_size,
+            numero_de_geracoes=generations,
+            limite_bateria=battery_limit,
+            taxa_de_mutacao=mutation_rate_percent,
+            taxa_de_crossover=crossover_rate_percent,
+            tamanho_do_torneio=tournament_size,
+            percentual_de_elitismo=elitism_percent,
+            parada_antecipada=early_stopping,
+            callback_on_generation=on_generation  # Passa o callback
         )
+
         best_routes = result['best_genotype']
         best_fitness = result['best_fitness']
         history = result['history']
+        stopped_early = result['stopped_early']
+        final_generation = result['final_generation']
 
-        st.subheader("Melhor Solução Encontrada")
+        # Informação sobre early stopping
+        if stopped_early:
+            # Toast notification (modal-like)
+            st.toast(f"🛑 Early Stopping Ativado! Parou na geração {final_generation}", icon="⚠️")
+            # Alerta visual mais chamativo
+            st.warning(f"🛑 **Algoritmo parou antecipadamente na geração {final_generation}**\n\n"
+                      f"📊 Motivo: Sem melhoria por 30 gerações consecutivas\n\n"
+                      f"💡 Isso indica que o algoritmo convergiu para uma solução estável.")
+        else:
+            st.success(f"✅ Algoritmo executou todas as {final_generation} gerações com sucesso!")
+
+        st.subheader("Melhor Plano de vôo encontrado")
         for i, route in enumerate(best_routes):
-            rota_str = ' → '.join([f"Cliente {idx+1}" for idx in route])
-            st.write(f"**Drone {i+1}:** {rota_str if rota_str else 'Nenhum cliente'}")
+            if route:
+                rota_str = 'Lanchonete → ' + ' → '.join([f"Cliente {idx+1}" for idx in route]) + ' → Lanchonete'
+            else:
+                rota_str = 'Lanchonete → Lanchonete'
+            st.write(f"**Drone {i+1}:** {rota_str}")
             dist = 0.0
             if route:
-                from ga_core import route_distance
-                dist = route_distance(route, clients_coords)
+                from ga_core import calcula_distancia_euclidiana_rota
+                dist = calcula_distancia_euclidiana_rota(route, coordenadas_clientes)
             st.write(f"Distância da rota: {dist:.1f} m {'⚠️' if dist > battery_limit else ''}")
         st.write(f"**Distância total percorrida:** {best_fitness:.1f} m")
-
-        # st.subheader("Resultados Finais")
-
-        # col_final1, col_final2 = st.columns(2)
-
-        # with col_final1:
-        #     st.markdown("**Rotas dos Drones (Final)**")
-        #     fig = plot_routes(clients_coords, best_routes)
-        #     fig.set_size_inches(5, 5)
-        #     st.pyplot(fig, use_container_width=True)
-
-        # with col_final2:
-        #     st.markdown("**Convergência do Algoritmo (Final)**")
-        #     import pltas plt
-        #     fig2, ax2 = plt.subplots(figsize=(5, 5))
-        #     ax2.plot(history, label='Melhor fitness')
-        #     ax2.set_xlabel('Geração')
-        #     ax2.set_ylabel('Distância total (m)')
-        #     ax2.set_title('Convergência do AG')
-        #     ax2.grid(True)
-        #     st.pyplot(fig2, use_container_width=True)
-
         st.success("Execução finalizada!")
     else:
         st.info("Ajuste os parâmetros e clique em 'Executar Algoritmo Genético'.")
