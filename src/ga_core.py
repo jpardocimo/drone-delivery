@@ -13,6 +13,125 @@ Populacao = List[Individuo]
 
 
 #-----------------------------
+# Executa o Algoritmo Genético - FUNÇÃO PRINCIPAL DO GA
+#-----------------------------
+def algoritimo_genetico(
+    clientes_coordenadas: np.ndarray,
+    tamanho_populacao: int = 50,
+    numero_de_geracoes: int = 100,
+    limite_bateria: float = 4200.0,
+    taxa_de_mutacao: float = 0.02,
+    taxa_de_crossover: float = 0.8,
+    tamanho_do_torneio: int = 3,
+    percentual_de_elitismo: int = 10,
+    parada_antecipada: bool = True,
+    limite_da_parada_antecipada: int = 30,
+    callback_on_generation: Optional[Callable[[int, Individuo, float], None]] = None
+) -> Dict:
+    """
+    Executa o Algoritmo Genético e retorna o melhor resultado encontrado.
+    Args:
+        clientes_coordenadas: coordenadas dos clientes
+        tamanho_populacao: tamanho da população
+        numero_de_geracoes: numero de gerações
+        limite_bateria: limite de bateria dos drones
+        taxa_de_mutacao: taxa de mutação
+        taxa_de_crossover: taxa de crossover
+        tamanho_do_torneio: tamanho do torneio
+        percentual_de_elitismo: percentual de elitismo
+        parada_antecipada: se True, interrompe se não houver melhoria por limite_da_parada_antecipada gerações
+        limite_da_parada_antecipada: número de gerações sem melhoria antes de parar (default: 30)
+        callback_on_generation: função que será chamada a cada geração
+    Returns:
+        dict com as chaves: 'best_genotype', 'best_fitness', 'history', 'stopped_early' (lista de melhores fitness por geração)
+    """
+   
+    #Inicialização da população
+    numero_de_clientes = clientes_coordenadas.shape[0] #armazena a quantidade de clientes que precisam ser visitados
+    populacao = inicializa_populacao(numero_de_clientes, tamanho_populacao) #cria a população inicial
+    
+    #------------------------------------------------
+    # avalia a aptidão dos individuos da população
+    #------------------------------------------------
+    #calcula o fitness de cada individuo e armazena em uma lista (fitness da populacao)
+    fitness_da_populacao = [calcula_fitness(individuo, clientes_coordenadas, limite_bateria) for individuo in populacao] 
+    indice_do_melhor_individuo = int(np.argmin([m for m in fitness_da_populacao])) #indice do melhor individuo da população inicial
+    melhor_individuo = [individuo.copy() for individuo in populacao[indice_do_melhor_individuo]] #armazena o melhor individuo
+    melhor_fitness = fitness_da_populacao[indice_do_melhor_individuo] # só fitness do melhor individuo da população inicial
+        
+    # Variáveis para early stopping
+    contador_de_melhoria = 0
+    stopped_early = False
+
+    #------------------------------------------------
+    # Loop das gerações 
+    #------------------------------------------------
+    for geracao in range(numero_de_geracoes):
+        nova_populacao = []
+
+        # Converte o percentual em fração e calcula quantos indivíduos representam essa fração da população.
+        # aplica o floor para arredondar para baixo e garantir que o numero de individuos seja inteiro
+        num_elite = int(tamanho_populacao * percentual_de_elitismo / 100)
+
+        # Ordenar população por fitness (melhores primeiro)
+        indices_ordenados = np.argsort([fit for fit in fitness_da_populacao])
+
+        # Seleciona os melhores individuos da população para elitismo
+        elite_population = [populacao[i] for i in indices_ordenados[:num_elite]]
+
+        # Adiciona os melhores individuos do elitismo na nova população
+        nova_populacao = elite_population.copy()  # Preservar elite
+
+        # Loop para seleção, crossover e mutação e gerar nova população
+        while len(nova_populacao) < tamanho_populacao:
+            # Seleção - Torneio
+            pai1 = selecao(populacao, fitness_da_populacao, tamanho_do_torneio)
+            pai2 = selecao(populacao, fitness_da_populacao, tamanho_do_torneio)
+            # Crossover - OX (Ordered Crossover)
+            if random.random() < taxa_de_crossover: #se a taxa de crossover for menor que um numero aleatorio, faz o crossover
+                filho1, filho2 = order_crossover(pai1, pai2)
+            else:
+                filho1, filho2 = [rota.copy() for rota in pai1], [route.copy() for route in pai2]
+            # Mutação - Swap de clientes dentro ou entre rotas
+            filho1 = mutacao(filho1, taxa_de_mutacao)
+            filho2 = mutacao(filho2, taxa_de_mutacao)
+            nova_populacao.extend([filho1, filho2])
+            
+        # Ajusta tamanho da população
+        populacao = nova_populacao[:tamanho_populacao]
+        fitness_da_populacao = [calcula_fitness(individuo, clientes_coordenadas, limite_bateria) for individuo in populacao]
+        indice_do_melhor_individuo_geracao = int(np.argmin([fit for fit in fitness_da_populacao]))
+        melhor_fitness_geracao = fitness_da_populacao[indice_do_melhor_individuo_geracao]
+        melhor_individuo_geracao = [rota.copy() for rota in populacao[indice_do_melhor_individuo_geracao]]
+        
+        # Atualiza o melhor individuo e o melhor fitness se o fitness da 
+        # geração atual for menor que o melhor fitness encontrado até o momento
+        if melhor_fitness_geracao < melhor_fitness:
+            melhor_fitness = melhor_fitness_geracao
+            melhor_individuo = [rota.copy() for rota in populacao[indice_do_melhor_individuo_geracao]]
+            contador_de_melhoria = 0  # Reset contador
+        else:
+            contador_de_melhoria += 1
+            
+        # Early stopping check
+        if parada_antecipada and contador_de_melhoria >= limite_da_parada_antecipada:
+            stopped_early = True
+            # Ainda chama o callback para mostrar a última geração
+            if callback_on_generation is not None:
+                callback_on_generation(geracao, melhor_individuo_geracao, melhor_fitness_geracao)
+            break
+
+        # Chamada do callback para animação
+        if callback_on_generation is not None:
+            callback_on_generation(geracao, melhor_individuo_geracao, melhor_fitness_geracao) 
+    return {
+        'melhor_individuo': melhor_individuo,
+        'melhor_fitness': melhor_fitness,
+        'stopped_early': stopped_early,
+        'geracao_final': geracao + 1 if stopped_early else numero_de_geracoes
+    }
+
+#-----------------------------
 # Cria a população inicial 
 #-----------------------------
 def inicializa_populacao(n_clientes: int, tam_pop: int) -> Populacao:
@@ -24,17 +143,15 @@ def inicializa_populacao(n_clientes: int, tam_pop: int) -> Populacao:
     populacao: Populacao = []
 
     for _ in range(tam_pop):
-        perm = clientes_base.copy()
-        random.shuffle(perm)
-
+        permuta = clientes_base.copy() 
+        random.shuffle(permuta)
+        #permuta os clientes aleatoriamente entre os drones
         k = random.randint(0, n_clientes)   # ponto de corte aleatório
-        drone1 = perm[:k]
-        drone2 = perm[k:]
-
+        drone1 = permuta[:k]
+        drone2 = permuta[k:]
         populacao.append((drone1, drone2))
 
     return populacao
-
 
 #-----------------------------
 # Caucula o fitness de um individuo
@@ -53,26 +170,30 @@ def calcula_fitness(
     d1 = calcula_distancia_euclidiana_rota(individuo[0], coords)
     d2 = calcula_distancia_euclidiana_rota(individuo[1], coords)
 
-    # Penalização de bateria
+    # Penalização de bateria - se a distancia percorrida for maior que o limite de bateria, 
+    # penaliza com uma multa de 100 vezes a distancia excedente
     penalty = 0.0
     for d in (d1, d2):
         if d > battery_limit:
             penalty += (d - battery_limit) * penalty_factor
 
     soma_dist = d1 + d2 + penalty
-    desequilibrio = abs(d1 - d2)
-    return soma_dist, desequilibrio
+
+    return soma_dist
 
 #-----------------------------
 # Seleção por torneio
 #-----------------------------
-def selecao(population: Populacao, fitnesses: List[float], tournament_size: int = 3) -> Individuo:
+def selecao(populacao: Populacao, array_de_fitness: List[float], tamanho_do_torneio: int = 3) -> Individuo:
     """
     Seleção por torneio: retorna um indivíduo da população.
     """
-    selected = random.sample(list(enumerate(fitnesses)), tournament_size)
-    best_idx = min(selected, key=lambda x: x[1])[0]
-    return [route.copy() for route in population[best_idx]]
+    # faz o torneio com um numero de individuos aleatorios da populacao
+    selecionados = random.sample(list(enumerate(array_de_fitness)), tamanho_do_torneio)
+    # retorna o indice do individuo com o menor fitness
+    melhor_individuo = min(selecionados, key=lambda x: x[1])[0]
+    # retorna o individuo com o menor fitness
+    return [rota.copy() for rota in populacao[melhor_individuo]]
 
 #-----------------------------
 # Método de crossover ordenado (OX)
@@ -99,7 +220,8 @@ def order_crossover(pai1: Individuo, pai2: Individuo) -> Tuple[Individuo, Indivi
     filho2_resto = [x for x in pai1_flat if x not in filho2_meio]
     filho2_flat = filho2_resto[:ponto_a] + filho2_meio + filho2_resto[ponto_a:]
 
-    # Divisão dos filhos: manter proporção dos pais
+    # Divisão dos filhos: manter a mesma proporção dos pais, ou seja, 
+    # para manter a quantidade de clientes de cada drone igual ao dos pais
     ponto_de_corte1 = len(pai1[0])
     ponto_de_corte2 = len(pai2[0])
 
@@ -111,7 +233,7 @@ def order_crossover(pai1: Individuo, pai2: Individuo) -> Tuple[Individuo, Indivi
 # Mutação: troca de clientes dentro ou entre rotas 
 # de acordo com a taxa de mutação
 #-----------------------------
-def mutate(individuo: Individuo, taxa_de_mutacao: float) -> Individuo:
+def mutacao(individuo: Individuo, taxa_de_mutacao: float) -> Individuo:
     """
     Mutação: troca de clientes dentro ou entre rotas.
     """
@@ -132,107 +254,8 @@ def mutate(individuo: Individuo, taxa_de_mutacao: float) -> Individuo:
     return novo_individuo
 
 
-#-----------------------------
-# Executa o Algoritmo Genético
-#-----------------------------
-def algoritimo_genetico(
-    clientes_coordenadas: np.ndarray,
-    tamanho_populacao: int = 50,
-    numero_de_geracoes: int = 100,
-    limite_bateria: float = 1500.0,
-    taxa_de_mutacao: float = 0.02,
-    taxa_de_crossover: float = 0.8,
-    tamanho_do_torneio: int = 3,
-    percentual_de_elitismo: int = 10,
-    parada_antecipada: bool = True,
-    limite_da_parada_antecipada: int = 30,
-    callback_on_generation: Optional[Callable[[int, Individuo, float], None]] = None
-) -> Dict:
-    """
-    Executa o Algoritmo Genético e retorna o melhor resultado encontrado.
-    Args:
-        early_stopping: se True, interrompe se não houver melhoria por early_stopping_patience gerações
-        early_stopping_patience: número de gerações sem melhoria antes de parar (default: 30)
-    Returns:
-        dict com as chaves: 'best_genotype', 'best_fitness', 'history', 'stopped_early' (lista de melhores fitness por geração)
-    """
-   
-    numero_de_clientes = clientes_coordenadas.shape[0] #armazena a quantidade de clientes que precisam ser visitados
-    populacao = inicializa_populacao(numero_de_clientes, tamanho_populacao) #cria a população inicial
-    fitness_da_populacao = [calcula_fitness(individuo, clientes_coordenadas, limite_bateria) for individuo in populacao] #calcula o fitness de cada individuo e armazena em uma lista (fitness da populacao)
-    indice_do_melhor_individuo = int(np.argmin([m[0] for m in fitness_da_populacao])) # menor soma_dist
-    melhor_individuo = [individuo.copy() for individuo in populacao[indice_do_melhor_individuo]] #armazena o melhor individuo
-    best_fitness = fitness_da_populacao[indice_do_melhor_individuo][0] # só a soma_dist
-    history = [best_fitness]
-    
-    # Variáveis para early stopping
-    no_improvement_count = 0
-    stopped_early = False
-
-    for gen in range(numero_de_geracoes):
-        new_population = []
-        num_elite = int(tamanho_populacao * percentual_de_elitismo / 100)
-        # Ordenar população por fitness (melhores primeiro)
-        sorted_indices = np.argsort([m[0] for m in fitness_da_populacao])
-        elite_population = [populacao[i] for i in sorted_indices[:num_elite]]
-        new_population = elite_population.copy()  # Preservar elite
-
-
-        while len(new_population) < tamanho_populacao:
-            # Seleção
-            parent1 = selecao(populacao, fitness_da_populacao, tamanho_do_torneio)
-            parent2 = selecao(populacao, fitness_da_populacao, tamanho_do_torneio)
-            # Crossover
-            if random.random() < taxa_de_crossover:
-                child1, child2 = order_crossover(parent1, parent2)
-            else:
-                child1, child2 = [route.copy() for route in parent1], [route.copy() for route in parent2]
-            # Mutação
-            child1 = mutate(child1, taxa_de_mutacao)
-            child2 = mutate(child2, taxa_de_mutacao)
-            new_population.extend([child1, child2])
-        # Ajusta tamanho
-        populacao = new_population[:tamanho_populacao]
-        fitness_da_populacao = [calcula_fitness(ind, clientes_coordenadas, limite_bateria) for ind in populacao]
-        gen_best_idx = int(np.argmin([m[0] for m in fitness_da_populacao]))
-        gen_best_fitness = fitness_da_populacao[gen_best_idx][0]
-        gen_best_genotype = [route.copy() for route in populacao[gen_best_idx]]
-        
-        # Verifica se houve melhoria
-        improved = False
-        if gen_best_fitness < best_fitness:
-            best_fitness = gen_best_fitness
-            melhor_individuo = [route.copy() for route in populacao[gen_best_idx]]
-            improved = True
-            no_improvement_count = 0  # Reset contador
-        else:
-            no_improvement_count += 1
-            
-        history.append(gen_best_fitness)
-        
-        # Early stopping check
-        if parada_antecipada and no_improvement_count >= limite_da_parada_antecipada:
-            print(f"🛑 Early stopping ativado: sem melhoria por {limite_da_parada_antecipada} gerações (geração {gen+1})")
-            stopped_early = True
-            # Ainda chama o callback para mostrar a última geração
-            if callback_on_generation is not None:
-                callback_on_generation(gen, gen_best_genotype, gen_best_fitness)
-            break
-            
-        # Chamada do callback para animação
-        if callback_on_generation is not None:
-            callback_on_generation(gen, gen_best_genotype, gen_best_fitness) 
-    return {
-        'best_genotype': melhor_individuo,
-        'best_fitness': best_fitness,
-        'history': history,
-        'stopped_early': stopped_early,
-        'final_generation': gen + 1 if stopped_early else numero_de_geracoes
-    }
-
 
 ####### FUNÇÕES AUXILIARES #######
-
 #-----------------------------
 # individuo_flat:concatena as rotas de dois drones em uma única lista 
 # (junta as todas as rotas de um individuo em uma única lista, desconsiderando os drones)
@@ -255,7 +278,6 @@ def individuo_split(lista_rotas_flat: List[int], ponto_de_corte: int) -> Individ
     """
     return [lista_rotas_flat[:ponto_de_corte], lista_rotas_flat[ponto_de_corte:]]
 
-
 #-----------------------------
 # Caucula a distancia euclidiana de uma rota para usar na função de fitness
 #-----------------------------
@@ -276,47 +298,3 @@ def calcula_distancia_euclidiana_rota(route: List[int], coordenadas_clientes: np
     total += np.linalg.norm(prev - np.array([0, 0]))
     return total
 
-#-----------------------------
-# usada na selecao_pareto para desempate se a domina b segundo Pareto
-#-----------------------------
-def domina(a, b):
-    """Retorna True se a domina b segundo Pareto (minimização)."""
-    return (a[0] <= b[0] and a[1] <= b[1]) and (a[0] < b[0] or a[1] < b[1])
-from typing import Tuple
-
-Metric = Tuple[float, float]
-
-def domina(a: Metric, b: Metric) -> bool:
-    """
-    Verifica dominância de Pareto (minimização) em duas métricas.
-
-    A domina B se:
-      – não é pior em nenhuma métrica  e
-      – é estritamente melhor em pelo menos uma.
-    """
-    dist_a, desequil_a = a
-    dist_b, desequil_b = b
-
-    nao_pior = (dist_a <= dist_b) and (desequil_a <= desequil_b)
-    melhor_em_alguma = (dist_a < dist_b) or (desequil_a < desequilibrio_b)
-
-    return nao_pior and melhor_em_alguma
-
-
-
-#-----------------------------
-# Seleção por torneio Pareto
-#-----------------------------
-def selecao_pareto(pop, metricas, k=3):
-    """Torneio Pareto + desempate pela menor soma_dist."""
-    participantes = random.sample(list(enumerate(metricas)), k)
-    vencedor = participantes[0][0]
-    for idx, m in participantes[1:]:
-        if domina(metricas[idx], metricas[vencedor]):
-            vencedor = idx
-        elif not domina(metricas[vencedor], metricas[idx]):
-            # Ninguém domina ninguém → menor soma_dist decide
-            if m[0] < metricas[vencedor][0]:
-                vencedor = idx
-    return [r.copy() for r in pop[vencedor]]
-# ---------------------------------------------------------------
