@@ -127,10 +127,10 @@ def main():
     """
     #Configuração da página
     st.title("🚁 Drone Delivery com GA - FIAP IA Devs")
-    with st.expander("ℹ️ Como o Problema é Calculado", expanded=False):
+    with st.expander("ℹ️ Como o problema foi modelado: ", expanded=False):
         st.markdown("""
         ## 🎯 **Objetivo do Problema**
-        Minimizar a **distância total** percorrida por 2 drones de entrega de uma lanchonete.
+        Minimizar a **distância total** percorrida por 1 ou 2 drones de entrega de uma lanchonete.
         
         ---
         
@@ -154,8 +154,8 @@ def main():
         **🔢 Cálculo:** Soma das distâncias euclidianas de ambos os drones.
         
         **📍 Para cada drone:**
-        Para cada drone, calcular a distância euclidiana da lanchonete ao primeiro cliente, 
-        entre clientes consecutivos, e do último cliente de volta à lanchonete.
+        - calcular a distância euclidiana da lanchonete ao primeiro cliente, 
+        - entre clientes consecutivos, e do último cliente de volta à lanchonete.
    
         
         **⚠️ Penalização:** Se distância > limite de bateria então: fitness * 100
@@ -166,8 +166,8 @@ def main():
         
         ## 🏆 **Método de Seleção**
         
-        **🥊 Torneio (tamanho 3):**
-        - Escolhe 3 indivíduos aleatoriamente (ou de acordo com o tamanho selecionado pelo usuario)
+        **🥊 Torneio :**
+        - Ex: Escolhe 3 indivíduos aleatoriamente (ou de acordo com o tamanho selecionado pelo usuario)
         - Seleciona o de **menor fitness**
         - Equilibra diversidade e qualidade das soluções
         
@@ -176,7 +176,7 @@ def main():
         ## 🔄 **Método de Crossover**
         
         **🧬 Order Crossover (OX) Adaptado:**
-        - Garante permutações válidas (sem clientes repetidos)
+        - Já garante permutações válidas (sem clientes repetidos)
         - Ideal para problemas de sequenciamento de rotas
         - Preserva a ordem relativa dos elementos
         
@@ -185,8 +185,8 @@ def main():
         ## 🎲 **Inicialização**
         
         **📝 Processo:**
-        1. **Permutação aleatória** de todos os clientes
-        2. **Divisão aleatória** entre os 2 drones  
+        1. **Inicialização aleatória** de todos os clientes
+        2. **Divisão (permuta) aleatória** entre os 2 drones  
                 
         ```python
         # Exemplo: [[3,1,5], [2,6,4]]  #drone1: [3,1,5] e drone2: [2,6,4]
@@ -228,7 +228,7 @@ def main():
             
         st.header("Parâmetros do Problema")
         num_clients = st.slider("Número de clientes", 5, 15,  key='num_clients')
-        battery_limit = st.number_input("Limite de bateria por drone (m)", 1600.0, 20000.0, step=100.0, key='battery_limit')
+        limite_bateria = st.number_input("Limite de bateria por drone (m)", 1600.0, 20000.0, step=100.0, key='battery_limit')
         
         st.header("Parâmetros do AG")
         population_size = st.slider("Tamanho da população", 10, 200, key='population_size')
@@ -275,7 +275,7 @@ def main():
     if botao_executar_ga_clicado:
         progress_bar = st.progress(0)
         historico_convergencia = []
-        solutions_data = []  # Lista para armazenar dados das soluções
+        lista_de_solucoes_econtradas = []  # Lista para armazenar dados das soluções
         
         # Tabela para visualizar soluções
         st.markdown("### 📊 Evolução das Soluções")
@@ -283,41 +283,41 @@ def main():
         
         #Definição da função que será chamada a cada geração (Aqui é somaente a definiçao,
         # ela é passada como callback para a funcao algoritimo_genetico e vai ser chamada de lá)
-        def on_generation(gen, best_genotype, best_fitness):
-            historico_convergencia.append(best_fitness)
+        def on_generation(geracao, melhor_individuo, melhor_fitness):
+            historico_convergencia.append(melhor_fitness)
             
-            # Calcular distâncias individuais dos drones
+            # Calcular distâncias individuais dos drones para plotar as linhas das rotas em tempo real
             from ga_core import calcula_distancia_euclidiana_rota
-            drone1_dist = calcula_distancia_euclidiana_rota(best_genotype[0], coordenadas_clientes) if best_genotype[0] else 0.0
-            drone2_dist = calcula_distancia_euclidiana_rota(best_genotype[1], coordenadas_clientes) if best_genotype[1] else 0.0
+            drone1_dist = calcula_distancia_euclidiana_rota(melhor_individuo[0], coordenadas_clientes) if melhor_individuo[0] else 0.0
+            drone2_dist = calcula_distancia_euclidiana_rota(melhor_individuo[1], coordenadas_clientes) if melhor_individuo[1] else 0.0
             
             # Formatar rotas para exibição compacta
-            drone1_route = ' → '.join([str(idx+1) for idx in best_genotype[0]]) if best_genotype[0] else "Vazio"
-            drone2_route = ' → '.join([str(idx+1) for idx in best_genotype[1]]) if best_genotype[1] else "Vazio"
+            drone1_route = ' → '.join([str(idx+1) for idx in melhor_individuo[0]]) if melhor_individuo[0] else "Vazio"
+            drone2_route = ' → '.join([str(idx+1) for idx in melhor_individuo[1]]) if melhor_individuo[1] else "Vazio"
             
-            # Adicionar dados da solução atual
-            solution_data = {
-                'Geração': gen + 1,
-                'Fitness Total': f"{best_fitness:.1f}m",
+            # Adicionar dados da solução atual para exibir na tabela
+            solucao_encontrada = {
+                'Geração': geracao + 1,
+                'Fitness Total': f"{melhor_fitness:.1f}m",
                 'Drone 1': drone1_route,
                 'Dist. Drone1': f"{drone1_dist:.1f}m",
                 'Drone 2': drone2_route, 
                 'Dist. Drone2': f"{drone2_dist:.1f}m",
-                'Status': '⚠️' if (drone1_dist > battery_limit or drone2_dist > battery_limit) else '✅'
+                'Status': '⚠️' if (drone1_dist > limite_bateria or drone2_dist > limite_bateria) else '✅'
             }
-            solutions_data.append(solution_data)
+            lista_de_solucoes_econtradas.append(solucao_encontrada)
             
-            # Atualizar tabela (mostrar apenas as últimas 5 soluções, mais recente no topo)
-            df = pd.DataFrame(solutions_data)  
+            # Atualizar tabela (solução mais recente no topo)
+            df = pd.DataFrame(lista_de_solucoes_econtradas)  
             df = df.iloc[::-1]  # Inverter ordem - mais recente no topo
             table_placeholder.dataframe(df, use_container_width=True, hide_index=True, height=250)
 
             # Gráfico de rotas em tempo real
-            fig_route = plotar_rotas(coordenadas_clientes, best_genotype, titulo=f"Rotas - Geração {gen+1}", raio=800)
+            fig_route = plotar_rotas(coordenadas_clientes, melhor_individuo, titulo=f"Rotas - Geração {geracao+1}", raio=800)
             fig_route.set_size_inches(6, 4)
             route_placeholder.pyplot(fig_route, use_container_width=True)
 
-            progress_bar.progress((gen +1)/ generations)
+            progress_bar.progress((geracao +1)/ generations)
         
             fig_conv, ax_conv = plt.subplots(figsize=(6, 4))
             plt.style.use('seaborn-v0_8')
@@ -339,7 +339,7 @@ def main():
             clientes_coordenadas=coordenadas_clientes,
             tamanho_populacao=population_size,
             numero_de_geracoes=generations,
-            limite_bateria=battery_limit,
+            limite_bateria=limite_bateria,
             taxa_de_mutacao=mutation_rate_percent,
             taxa_de_crossover=crossover_rate_percent,
             tamanho_do_torneio=tournament_size,
@@ -381,7 +381,7 @@ def main():
             if route:
                 from ga_core import calcula_distancia_euclidiana_rota
                 dist = calcula_distancia_euclidiana_rota(route, coordenadas_clientes)
-            st.write(f"Distância da rota: {dist:.1f} m {'⚠️' if dist > battery_limit else ''}")
+            st.write(f"Distância da rota: {dist:.1f} m {'⚠️' if dist > limite_bateria else ''}")
 
         st.write(f"**Distância total percorrida:** {melhor_fitness:.1f} m")
 
